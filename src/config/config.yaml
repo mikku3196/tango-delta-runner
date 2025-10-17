@@ -1,0 +1,31 @@
+# Interactive Brokers API Settings
+ib_account:
+  main_account_id: "U1234567"  # 縺ゅ↑縺溘・隱ｲ遞主哨蠎ｧID
+  nisa_account_id: "U7654321"  # 縺ゅ↑縺溘・NISA蜿｣蠎ｧID
+  host: "127.0.0.1"
+  port: 5000 # Gateway縺ｮ繝昴・繝・  client_id: 1
+
+# Discord Webhook URL
+discord_webhook_url: "https://discord.com/api/webhooks/..."
+
+# Portfolio Target Allocation
+portfolio_ratios:
+  index: 0.50  # 50%
+  dividend: 0.30 # 30%
+  range: 0.20    # 20%
+
+# Index Bot Settings
+index_bot:
+  ticker: "2559" # 萓・ MAXIS 蜈ｨ荳也阜譬ｪ蠑・繧ｪ繝ｼ繝ｫ繝ｻ繧ｫ繝ｳ繝医Μ繝ｼ)
+  monthly_investment: 15000 # 豈取怦縺ｮ遨咲ｫ矩｡・(繝ｪ繝舌Λ繝ｳ繧ｹ蜑阪・蜿り・､)
+
+# Dividend Bot Settings
+dividend_bot:
+  max_holding_stocks: 5
+  stop_loss_percentage: 0.20
+
+# Range Bot Settings
+range_bot:
+  bollinger_period: 20
+  bollinger_std_dev: 2.0
+  stop_loss_percentage_on_break: 0.02
