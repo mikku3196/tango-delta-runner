@@ -13,3 +13,10 @@ This is an automated trading system with three investment strategies:
 2. Edit src/config/config.yaml
 3. Start IB Client Portal Gateway
 4. Run: python src/main_controller.py
+
+
+## Environment Variables Setup
+
+1. Copy .env.example to .env
+2. Edit .env with your actual values
+3. Test with: python test_env_config.py
