@@ -1,0 +1,147 @@
+# ===============================================================
+# Project Chimera Configuration File (v3.2)
+# Public Configuration - Sensitive data is in .env file
+# ===============================================================
+
+# Interactive Brokers Gateway Settings
+ib_account:
+  main_account_id: "DU1234567"  # Will be overridden by .env
+  nisa_account_id: "FU7654321"  # Will be overridden by .env
+  host: "127.0.0.1"
+  port: 5000
+  client_id: 1
+
+# Discord Webhook URL (will be overridden by .env)
+discord_webhook_url: "https://discord.com/api/webhooks/..."
+
+# Portfolio Target Allocation (Default: Aggressive Profile)
+portfolio_ratios:
+  index: 0.50
+  dividend: 0.30
+  range: 0.20
+
+# Core Index Bot Settings (NISA Tsumitate)
+index_bot:
+  ticker: "2559"  # 全世界株式インデックスファンド
+  monthly_investment: 30000
+  account_type: "nisa_tsumitate"
+  execution_day: 1  # 毎月1日
+  execution_time: "09:30"
+
+# Satellite Dividend Bot Settings (NISA Growth)
+dividend_bot:
+  max_holding_stocks: 5
+  stop_loss_percentage: 0.20
+  screening_day: 0  # 日曜日
+  screening_time: "22:00"
+  purchase_time: "09:05"  # 営業日
+  account_type: "nisa_growth"
+
+# Dividend Bot Screening Criteria
+dividend_bot_criteria:
+  min_dividend_yield: 4.0
+  min_equity_ratio: 50.0
+  max_per: 25.0
+  no_dividend_cut_years: 10
+  min_market_cap: 100000000000  # 1,000億円
+  max_debt_ratio: 0.5
+
+# Satellite Range Bot Settings (Taxable Account)
+range_bot:
+  bollinger_period: 20
+  bollinger_std_dev: 2.0
+  stop_loss_percentage_on_break: 0.02
+  screening_time: "16:00"  # 営業日
+  trading_hours: "09:00-15:00"
+  account_type: "taxable"
+  max_position_size: 100000  # 最大ポジションサイズ
+
+# Range Bot Screening Criteria
+range_bot_criteria:
+  min_volume: 1000000  # 最低出来高
+  max_price_volatility: 0.05  # 価格変動率
+  min_liquidity_score: 0.7
+
+# NISA Non-Taxable Account Monitoring
+nisa_settings:
+  annual_limit: 3600000  # 年間枠 360万円
+  lifetime_limit: 18000000  # 生涯枠 1,800万円
+  monitoring_enabled: true
+  alert_threshold: 0.95  # 95%使用時にアラート
+  report_frequency: "daily"  # daily, weekly, monthly
+
+# Risk Assessment Profiles
+risk_assessment:
+  default_profile: "aggressive"  # stable, balanced, aggressive
+  profiles:
+    stable:
+      index: 0.70
+      dividend: 0.20
+      range: 0.10
+      description: "安定重視型"
+    balanced:
+      index: 0.60
+      dividend: 0.30
+      range: 0.10
+      description: "バランス型"
+    aggressive:
+      index: 0.50
+      dividend: 0.30
+      range: 0.20
+      description: "積極型"
+
+# Detailed Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "jsonl"
+  max_files: 7  # 保持日数
+  max_size_mb: 50  # ファイルサイズ上限
+  directory: "logs"
+  rotation_time: "00:00"  # ローテーション時間
+
+# Watchdog System Configuration
+watchdog:
+  check_interval: 600  # 10分ごとのチェック
+  max_restart_attempts: 3
+  restart_cooldown: 300  # 5分間のクールダウン
+  heartbeat_interval: 86400  # 24時間ごとのハートビート
+  emergency_shutdown_enabled: true
+
+# Backtesting Configuration
+backtesting:
+  default_period_years: 5
+  commission_rate: 0.001  # 0.1%
+  slippage_rate: 0.0005  # 0.05%
+  initial_capital: 1000000  # 100万円
+  results_directory: "logs/backtest_results"
+
+# Emergency Stop Configuration
+emergency_stop:
+  enabled: true
+  stop_flag_file: "STOP.flag"
+  auto_cleanup_hours: 24  # 24時間後に自動クリーンアップ
+
+# System Performance Monitoring
+performance:
+  cpu_threshold: 80  # CPU使用率上限(%)
+  memory_threshold: 80  # メモリ使用率上限(%)
+  disk_threshold: 90  # ディスク使用率上限(%)
+  monitoring_enabled: true
+
+# Trading Hours Configuration
+trading_hours:
+  japan_market_open: "09:00"
+  japan_market_close: "15:00"
+  us_market_open: "22:30"  # JST
+  us_market_close: "05:00"  # JST
+  weekend_trading: false
+
+# Notification Settings
+notifications:
+  trade_execution: true
+  portfolio_rebalance: true
+  nisa_limit_warning: true
+  system_errors: true
+  daily_summary: true
+  weekly_report: true
+  monthly_report: true
