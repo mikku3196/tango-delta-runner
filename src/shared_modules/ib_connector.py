@@ -1,95 +1,140 @@
-from ibapi.client import EClient
-from ibapi.wrapper import EWrapper
-from ibapi.contract import Contract
-from ibapi.order import Order
-import threading
-import time
+from ib_insync import IB
+import asyncio
+import os
+from dotenv import load_dotenv
 
-class IBConnector(EWrapper, EClient):
-    def __init__(self):
-        EClient.__init__(self, self)
-        self.connected = False
-        self.next_order_id = 1
-        self.thread = None
-    
-    def connect_to_ib(self, host, port, client_id):
-        """IB Gatewayに接続"""
+class IBConnector:
+    def __init__(self, host='127.0.0.1', port=5000, client_id=1):
+        """
+        IB APIへの接続を管理するクラス。
+        """
+        self.host = host
+        self.port = port
+        self.client_id = client_id
+        self.ib = IB()
+        
+        # 環境変数を読み込み
+        load_dotenv()
+        
+        # 環境変数から設定を取得（存在する場合）
+        self.host = os.getenv('IB_GATEWAY_HOST', host)
+        self.port = int(os.getenv('IB_GATEWAY_PORT', port))
+        self.client_id = int(os.getenv('IB_CLIENT_ID', client_id))
+
+    async def connect(self):
+        """
+        IB Client Portal Gatewayに非同期で接続を試みる。
+        """
+        print("IB Gatewayへの接続を試みています...")
         try:
-            self.connect(host, port, client_id)
-            self.thread = threading.Thread(target=self.run, daemon=True)
-            self.thread.start()
-            time.sleep(1)
-            return self.connected
+            if not self.ib.isConnected():
+                await self.ib.connectAsync(self.host, self.port, clientId=self.client_id)
+                print(f"接続成功: {self.ib.client}")
+                return True
         except Exception as e:
-            print(f"IB接続エラー: {e}")
+            print(f"接続失敗: {e}")
             return False
-    
-    def disconnect_from_ib(self):
-        """IB Gatewayから切断"""
-        if self.connected:
-            self.disconnect()
-            if self.thread:
-                self.thread.join(timeout=5)
-    
-    def connectionClosed(self):
-        """接続が閉じられた時のコールバック"""
-        self.connected = False
-        print("IB接続が切断されました")
-    
-    def nextValidId(self, orderId):
-        """次の有効な注文IDを受け取った時のコールバック"""
-        self.next_order_id = orderId
-        self.connected = True
-        print(f"IB接続が確立されました。次の注文ID: {orderId}")
-    
-    def place_order(self, contract, order):
-        """注文を発注"""
-        if not self.connected:
+
+    def disconnect(self):
+        """
+        IB Gatewayから切断する。
+        """
+        if self.ib.isConnected():
+            print("IB Gatewayから切断します...")
+            self.ib.disconnect()
+            print("切断完了。")
+
+    def get_ib_instance(self):
+        """
+        接続済みのIBインスタンスを返す。
+        """
+        return self.ib if self.ib.isConnected() else None
+
+    async def get_account_summary(self):
+        """
+        口座サマリーを取得する。
+        """
+        if not self.ib.isConnected():
             raise Exception("IB接続が確立されていません")
         
-        self.placeOrder(self.next_order_id, contract, order)
-        order_id = self.next_order_id
-        self.next_order_id += 1
-        return order_id
-    
-    def create_stock_contract(self, symbol, exchange="TSE"):
-        """株式契約を作成"""
-        contract = Contract()
-        contract.symbol = symbol
-        contract.secType = "STK"
-        contract.exchange = exchange
-        contract.currency = "JPY"
-        return contract
-    
-    def create_market_order(self, action, quantity):
-        """成行注文を作成"""
-        order = Order()
-        order.action = action
-        order.orderType = "MKT"
-        order.totalQuantity = quantity
-        return order
-    
-    def create_limit_order(self, action, quantity, limit_price):
-        """指値注文を作成"""
-        order = Order()
-        order.action = action
-        order.orderType = "LMT"
-        order.totalQuantity = quantity
-        order.lmtPrice = limit_price
-        return order
-    
-    def get_account_summary(self, account_id):
-        """口座サマリーを取得"""
-        if not self.connected:
+        try:
+            account_summary = self.ib.accountSummary()
+            return account_summary
+        except Exception as e:
+            print(f"口座サマリー取得エラー: {e}")
+            return None
+
+    async def get_positions(self):
+        """
+        現在のポジションを取得する。
+        """
+        if not self.ib.isConnected():
             raise Exception("IB接続が確立されていません")
         
-        self.reqAccountSummary(1, "All", "TotalCashValue,NetLiquidation,GrossPositionValue")
-        return True
-    
-    def accountSummary(self, reqId, account, tag, value, currency):
-        """口座サマリーのコールバック"""
-        print(f"口座サマリー - {tag}: {value} {currency}")
-    
-    def error(self, reqId, errorCode, errorString):
-        """エラーのコールバック"""
-        print(f"IB API エラー [{errorCode}]: {errorString}")
+        try:
+            positions = self.ib.positions()
+            return positions
+        except Exception as e:
+            print(f"ポジション取得エラー: {e}")
+            return None
+
+    async def place_market_order(self, symbol, action, quantity, exchange="TSE"):
+        """
+        成行注文を発注する。
+        """
+        if not self.ib.isConnected():
+            raise Exception("IB接続が確立されていません")
+        
+        try:
+            # 契約を作成
+            contract = self.ib.stock(symbol, exchange, "JPY")
+            
+            # 注文を作成
+            order = self.ib.marketOrder(action, quantity)
+            
+            # 注文を発注
+            trade = self.ib.placeOrder(contract, order)
+            
+            print(f"注文発注: {symbol} {action} {quantity}株")
+            return trade
+            
+        except Exception as e:
+            print(f"注文発注エラー: {e}")
+            return None
+
+# このファイルが直接実行された場合のテスト用コード
+async def main():
+    connector = IBConnector()
+    if await connector.connect():
+        # 接続成功時のテストアクション (例: 口座情報を取得)
+        account_summary = await connector.get_account_summary()
+        if account_summary:
+            print("\n--- 口座サマリー ---")
+            for item in account_summary:
+                if item.tag == 'NetLiquidation':
+                    print(f"  純資産価値: {item.value} {item.currency}")
+                elif item.tag == 'TotalCashValue':
+                    print(f"  現金残高: {item.value} {item.currency}")
+            print("--------------------")
+        
+        # ポジション情報を取得
+        positions = await connector.get_positions()
+        if positions:
+            print("\n--- 現在のポジション ---")
+            for position in positions:
+                print(f"  {position.contract.symbol}: {position.position}株")
+            print("--------------------")
+        
+        # 切断
+        connector.disconnect()
+    else:
+        print("プログラムを終了します。IB Gatewayが起動しているか、ホスト/ポート設定を確認してください。")
+
+
+if __name__ == "__main__":
+    # Windowsで 'asyncio' を正しく動作させるための設定
+    # `asyncio.run` はイベントループを自動管理してくれる
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("プログラムが中断されました。")

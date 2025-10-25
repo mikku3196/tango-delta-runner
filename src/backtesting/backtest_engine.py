@@ -43,6 +43,8 @@ class BacktestEngine:
         self.cash = initial_capital
         self.shares = 0
         self.portfolio_value = initial_capital
+        self.last_buy_price = 0
+        self.high_water_mark = 0  # ポジション期間中の最高値を記録
         
         # 取引履歴
         self.trades = []
@@ -65,6 +67,10 @@ class BacktestEngine:
             "end_date": end_date,
             "initial_capital": initial_capital
         })
+        
+        # --- 最重要：以下の2行が実行されていることを確認 ---
+        self.load_data()
+        self._prepare_data()
     
     def load_data(self) -> bool:
         """
@@ -116,6 +122,43 @@ class BacktestEngine:
             self.detailed_logger.log_error("BACKTEST", e, f"Load data for {self.ticker}")
             return False
     
+    def _prepare_data(self):
+        """
+        テクニカル指標を計算してデータを準備する
+        """
+        try:
+            if self.data is None or self.data.empty:
+                self.detailed_logger.log_error("BACKTEST", Exception("No data available"), "Prepare data")
+                return
+            
+            # ボリンジャーバンドの計算
+            period = getattr(self.strategy, 'bollinger_period', 20)
+            std_dev = getattr(self.strategy, 'bollinger_std_dev', 2.0)
+            
+            # SMA計算
+            sma_20 = self.data['Close'].rolling(window=period).mean()
+            std = self.data['Close'].rolling(window=period).std()
+            
+            # ボリンジャーバンド
+            self.data['BB_Upper'] = sma_20 + (std_dev * std)
+            self.data['BB_Lower'] = sma_20 - (std_dev * std)
+            self.data['BB_Middle'] = sma_20
+            
+            # SMA200計算
+            self.data['SMA200'] = self.data['Close'].rolling(window=200).mean()
+            
+            # 欠損値を前方埋め
+            self.data = self.data.ffill()
+            
+            self.detailed_logger.log_event("INFO", "BACKTEST", "Technical indicators calculated", {
+                "bollinger_period": period,
+                "bollinger_std_dev": std_dev,
+                "data_points": len(self.data)
+            })
+            
+        except Exception as e:
+            self.detailed_logger.log_error("BACKTEST", e, "Prepare data")
+    
     def run(self) -> Dict[str, Any]:
         """
         取得したデータを1日ずつループ処理し、戦略に基づいて取引をシミュレートする
@@ -142,33 +185,24 @@ class BacktestEngine:
             for date, row in self.data.iterrows():
                 current_price = row['Close']
                 
-                # --- ここからが追加箇所 ---
-                # ストップロス（損切り）の判断
-                # もし、現在株を保有しているなら...
+                # --- リスク管理機能（トレーリング・ストップロス） ---
                 if self.shares > 0:
-                    # 最後に買った時の取引記録を探す
-                    last_buy_trade = next((trade for trade in reversed(self.trades) if trade['type'] == 'buy'), None)
-                    if last_buy_trade:
-                        purchase_price = last_buy_trade['price']
-                        stop_loss_price = purchase_price * (1 - 0.15) # 例：購入価格から15%下落したら損切り
+                    # 1. 保有中は最高値を更新
+                    self.high_water_mark = max(self.high_water_mark, current_price)
+                    # 2. ストップロスとトレーリングストップをチェック
+                    stop_loss_triggered = self._check_and_execute_stop_loss(date, current_price)
+                    if stop_loss_triggered:
+                        continue
+                        
+                    trailing_stop_triggered = self._check_and_execute_trailing_stop(date, current_price)
+                    if trailing_stop_triggered:
+                        continue
+                # --- リスク管理機能ここまで ---
 
-                        # もし、現在の価格が損切りラインを下回ったら...
-                        if current_price < stop_loss_price:
-                            print(f"--- STOP LOSS TRIGGERED at {date.strftime('%Y-%m-%d')} ---")
-                            self._execute_sell(current_price, date) # 強制的に売却！
-                            self._update_portfolio_value(current_price, date) # ポートフォリオを更新
-                            # ストップロスが発動したので、この日のシグナル判断はスキップする
-                            continue
-                # --- 追加箇所ここまで ---
-
-                # 戦略からシグナルを取得（新しい仕様）
+                # 3. Botの買いシグナル生成ロジックを呼び出し
                 signal = self.strategy.generate_signal(row)
-                
-                # シグナルに基づいて取引を実行
-                if signal == 'BUY':
+                if signal == 'BUY' and self.shares == 0:
                     self._execute_buy(current_price, date)
-                elif signal == 'SELL':
-                    self._execute_sell(current_price, date)
                 # 'HOLD'の場合は何もしない
                 
                 # ポートフォリオ価値を更新
@@ -302,6 +336,8 @@ class BacktestEngine:
             # ポートフォリオを更新
             self.cash -= total_cost
             self.shares += shares_to_buy
+            self.last_buy_price = execution_price
+            self.high_water_mark = execution_price  # 購入時に最高値をリセット
             
             # 取引履歴に記録
             trade = {
@@ -348,6 +384,8 @@ class BacktestEngine:
             # ポートフォリオを更新
             self.cash += total_proceeds
             self.shares = 0
+            self.high_water_mark = 0  # 売却時にリセット
+            self.strategy.reset()  # Botの状態をリセット
             
             # 取引履歴に記録
             trade = {
@@ -388,6 +426,66 @@ class BacktestEngine:
             
         except Exception as e:
             self.detailed_logger.log_error("BACKTEST", e, f"Update portfolio value at {price}")
+    
+    def _check_and_execute_stop_loss(self, date: pd.Timestamp, current_price: float):
+        """
+        ストップロス機能（堅牢性強化）
+        設定ファイルのstop_loss_percentage_on_breakを使用して損切りを実行
+        """
+        try:
+            if self.shares > 0:  # 買いポジションを持っている場合のみ
+                # 最後に買った時の取引記録を探す
+                last_buy_trade = next((trade for trade in reversed(self.trades) if trade['type'] == 'buy'), None)
+                if last_buy_trade:
+                    entry_price = last_buy_trade['price']
+                    # 設定ファイルからストップロス率を取得（デフォルト2%）
+                    stop_loss_percentage = getattr(self.strategy, 'stop_loss_percentage', 0.02)
+                    stop_loss_price = entry_price * (1 - stop_loss_percentage)
+
+                    if current_price < stop_loss_price:
+                        print(f"--- STOP LOSS TRIGGERED at {date.strftime('%Y-%m-%d')} ---")
+                        print(f"Entry Price: {entry_price:.2f}, Current Price: {current_price:.2f}")
+                        print(f"Stop Loss Price: {stop_loss_price:.2f}, Loss: {((entry_price - current_price) / entry_price * 100):.2f}%")
+                        
+                        # ストップロスによる売却を実行
+                        self._execute_sell(current_price, date)
+                        self._update_portfolio_value(current_price, date)
+                        
+                        # ストップロスが発動したので、この日のシグナル判断はスキップする
+                        return True  # ストップロス発動を示すフラグ
+                        
+        except Exception as e:
+            self.detailed_logger.log_error("BACKTEST", e, f"Check stop loss at {current_price}")
+
+        return False  # ストップロス未発動
+    
+    def _check_and_execute_trailing_stop(self, date: pd.Timestamp, current_price: float):
+        """
+        トレーリング・ストップロス機能
+        設定ファイルのtrailing_stop_percentageを使用してトレーリング・ストップを実行
+        """
+        try:
+            if self.shares > 0:  # ポジションがある場合のみ
+                # トレーリングストップ価格を計算
+                trailing_stop_percentage = getattr(self.strategy, 'trailing_stop_percentage', 0.08)
+                trailing_stop_price = self.high_water_mark * (1 - trailing_stop_percentage)
+
+                if current_price < trailing_stop_price:
+                    print(f"--- TRAILING STOP TRIGGERED at {date.strftime('%Y-%m-%d')} ---")
+                    print(f"High Water Mark: {self.high_water_mark:.2f}, Current Price: {current_price:.2f}")
+                    print(f"Trailing Stop Price: {trailing_stop_price:.2f}, Profit: {((current_price - self.last_buy_price) / self.last_buy_price * 100):.2f}%")
+
+                    # トレーリング・ストップによる売却を実行
+                    self._execute_sell(current_price, date)
+                    self._update_portfolio_value(current_price, date)
+
+                    # トレーリング・ストップが発動したので、この日のシグナル判断はスキップする
+                    return True  # トレーリング・ストップ発動を示すフラグ
+
+        except Exception as e:
+            self.detailed_logger.log_error("BACKTEST", e, f"Check trailing stop at {current_price}")
+
+        return False  # トレーリング・ストップ未発動
     
     
     def _calculate_max_drawdown(self, values: List[float]) -> float:

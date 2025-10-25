@@ -9,28 +9,29 @@ from datetime import datetime
 import time
 
 class SatelliteRangeBot:
-    def __init__(self, config, discord=None, ib_connector=None, detailed_logger=None):
-        self.config = config
-        self.discord = discord
-        self.ib_connector = ib_connector
-        self.detailed_logger = detailed_logger or get_detailed_logger()
-        
-        # Bot状態
-        self.is_running = False
-        self.last_execution = None
-        self.execution_count = 0
-        self.error_count = 0
-        
-        # レンジ取引設定
-        self.bollinger_period = self.config.get("range_bot.bollinger_period", 20)
-        self.bollinger_std = self.config.get("range_bot.bollinger_std_dev", 2.0)
-        self.stop_loss_percentage = self.config.get("range_bot.stop_loss_percentage_on_break", 0.02)
+    def __init__(self, stop_loss_percentage=0.05, trailing_stop_percentage=0.08, bollinger_period=20, bollinger_std_dev=2.0):
+        """
+        Botを初期化し、戦略パラメータと内部状態を設定します。
+        """
+        self.name = "SatelliteRangeBot"
+
+        # --- 戦略パラメータの設定 ---
+        self.stop_loss_percentage = stop_loss_percentage
+        self.trailing_stop_percentage = trailing_stop_percentage
+        self.bollinger_period = bollinger_period
+        self.bollinger_std_dev = bollinger_std_dev
+
+        # --- 内部状態の初期化 (前回これが欠落していました) ---
+        self.position = 'none'      # 現在のポジション ('none' または 'long')
+        self.entry_price = 0.0      # ポジションを持った時の価格
+        self.last_signal = 'hold'   # 最後に出したシグナル
         
         # 取引履歴
         self.trade_history = []
         self.current_positions = []
         
-        self.detailed_logger.log_event("INFO", "SATELLITE_RANGE_BOT", "Bot initialized")
+        # ログとファイル設定
+        self.detailed_logger = get_detailed_logger()
         self.targets_file = "range_trade_target.csv"
         self.holdings_file = "range_holdings.csv"
         self.holdings = {}
@@ -441,7 +442,7 @@ class SatelliteRangeBot:
         """
         # --- FINAL PROOF ---
         # このメッセージが表示されなければ、古いコードが実行されています。
-        print("--- RUNNING LATEST generate_signal v3.2 ---") 
+        # print("--- RUNNING LATEST generate_signal v3.2 ---") 
         # --- END OF FINAL PROOF ---
 
         try:
@@ -449,31 +450,36 @@ class SatelliteRangeBot:
             if pd.isna(data_row['BB_Upper']) or pd.isna(data_row['SMA200']):
                 return 'HOLD'
 
-            # --- ここからが判断ロジック ---
+            # --- ここからが判断ロジック（純粋な逆張り戦略） ---
             
-            # 1. トレンドを判断する (今日の終値と、今日のSMA200を比較)
-            is_uptrend = data_row['Close'] > data_row['SMA200']
-
-            # 2. シグナルを生成する
-            if is_uptrend:
-                # 上昇トレンドの場合：買いシグナルのみを有効にする
-                if data_row['Close'] < data_row['BB_Lower']:
+            # 純粋な逆張り・レンジ相場戦略
+            # SMA200の上昇トレンドフィルターを削除し、ボリンジャーバンドのシグナルのみに基づいて取引
+            
+            # 現在の価格とボリンジャーバンドの値を取得
+            current_price = data_row['Close']
+            bb_lower = data_row['BB_Lower']
+            
+            # 買いシグナル判定のみに特化
+            if self.position == 'none':
+                # BUYシグナル: 価格がBB下限を下回る (純粋な逆張り)
+                if current_price < bb_lower:
+                    self.position = 'long'
+                    self.entry_price = current_price
+                    self.last_signal = 'buy'
                     return 'BUY'
-                else:
-                    return 'HOLD'  # 売りシグナルは無視
-            else:
-                # 非上昇トレンドの場合：通常のレンジ取引ロジック
-                if data_row['Close'] < data_row['BB_Lower']:
-                    return 'BUY'
-                elif data_row['Close'] > data_row['BB_Upper']:
-                    return 'SELL'
-                else:
-                    return 'HOLD'
+            
+            # ポジションがある場合は何もしない（エンジンに任せる）
+            return 'HOLD'
 
         except KeyError as e:
             # 必要な列（'Close', 'BB_Upper'など）が存在しない場合のエラーハンドリング
-            # print(f"Warning: Missing column in data_row: {e}") # デバッグ時に有効化
             return 'HOLD'
+    
+    def reset(self):
+        """取引が終了した際に、Botの内部状態をリセットする。"""
+        self.position = 'none'
+        self.entry_price = 0.0
+        self.last_signal = 'hold'
     
     def calculate_bollinger_bands_simple(self, data: pd.DataFrame, period: int, std_dev: float) -> dict:
         """
